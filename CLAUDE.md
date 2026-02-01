@@ -34,7 +34,7 @@ src/
 ### Key Components
 
 - **SubtitleExtractor** (`subtitle_extractor.py`): Handles video platform detection, subtitle extraction via yt-dlp subprocess calls, format conversion, and video metadata retrieval
-- **SubtitleAnalyzer** (`analyzer.py`): Parses SRT format, provides keyword search with timestamps, chapter detection via gap analysis, and segment generation
+- **SubtitleAnalyzer** (`analyzer.py`): Parses SRT/VTT formats, provides keyword search with timestamps, chapter detection via gap analysis, and segment generation
 - **MCP Server** (`server.py`): Async stdio-based server exposing 4 tools: `extract_subtitles`, `search_timestamp`, `get_video_info`, `list_available_subtitles`
 
 ### Design Patterns
@@ -47,7 +47,17 @@ src/
 ## External Dependencies
 
 - **yt-dlp**: Required system binary for video/subtitle operations
-- **Chrome**: Optional, needed for Bilibili cookie extraction when videos require authentication
+- **Chrome**: Optional, needed for cookie extraction in local development
+
+## Authentication
+
+MCP servers run in background processes without access to browser cookies. Authentication uses a fallback chain:
+
+1. `cookies_file` parameter (per-tool call)
+2. `YT_DLP_COOKIES` environment variable (recommended for MCP)
+3. `--cookies-from-browser chrome` (local development only)
+
+Export cookies: `yt-dlp --cookies-from-browser chrome --cookies ~/.yt-cookies.txt --skip-download "https://youtube.com"`
 
 ## Platform Support
 
@@ -57,6 +67,11 @@ src/
 ## MCP Registration
 
 ```bash
-# Register with Claude Code
+# Register with Claude Code (basic)
 claude mcp add subtitle-analyzer -- python -m src.server --cwd /path/to/subtitle-analyzer-mcp
+
+# Register with cookies authentication
+claude mcp add subtitle-analyzer -- \
+  env YT_DLP_COOKIES=/path/to/.yt-cookies.txt \
+  python -m src.server --cwd /path/to/subtitle-analyzer-mcp
 ```
