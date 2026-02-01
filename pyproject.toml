@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "subtitle-analyzer-mcp"
+version = "0.1.0"
+description = "MCP server for extracting and analyzing subtitles from YouTube and Bilibili using yt-dlp"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "yt-dlp>=2024.1.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+subtitle-analyzer-mcp = "src.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
