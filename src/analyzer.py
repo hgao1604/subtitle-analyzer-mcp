@@ -20,38 +20,111 @@ class SubtitleEntry:
 
 class SubtitleAnalyzer:
     """字幕分析器"""
-    
+
+    def _detect_format(self, content: str) -> str:
+        """检测字幕格式"""
+        if content.strip().startswith("WEBVTT"):
+            return "vtt"
+        return "srt"
+
+    def parse(self, content: str) -> list[SubtitleEntry]:
+        """自动检测格式并解析字幕"""
+        fmt = self._detect_format(content)
+        if fmt == "vtt":
+            return self.parse_vtt(content)
+        return self.parse_srt(content)
+
+    def parse_vtt(self, vtt_content: str) -> list[SubtitleEntry]:
+        """解析 VTT 格式字幕"""
+        entries = []
+        lines = vtt_content.split("\n")
+
+        # 跳过 WEBVTT 头部
+        i = 0
+        while i < len(lines) and not re.match(r"\d{2}:\d{2}:\d{2}\.\d{3}\s*-->", lines[i]):
+            i += 1
+
+        index = 1
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # 匹配时间戳行
+            time_match = re.match(
+                r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})",
+                line
+            )
+            if time_match:
+                start_time = time_match.group(1)
+                end_time = time_match.group(2)
+
+                # 收集文本行（直到空行或下一个时间戳）
+                i += 1
+                text_lines = []
+                while i < len(lines):
+                    text_line = lines[i].strip()
+                    if not text_line or re.match(r"\d{2}:\d{2}:\d{2}\.\d{3}\s*-->", text_line):
+                        break
+                    # 清理 HTML/VTT 标签
+                    clean_line = re.sub(r"<[^>]+>", "", text_line)
+                    if clean_line:
+                        text_lines.append(clean_line)
+                    i += 1
+
+                if text_lines:
+                    entry = SubtitleEntry(
+                        index=index,
+                        start_time=start_time,
+                        end_time=end_time,
+                        text=" ".join(text_lines),
+                        start_seconds=self._time_to_seconds(start_time)
+                    )
+                    entries.append(entry)
+                    index += 1
+            else:
+                i += 1
+
+        return entries
+
     def parse_srt(self, srt_content: str) -> list[SubtitleEntry]:
         """解析 SRT 格式字幕"""
         entries = []
         blocks = re.split(r"\n\s*\n", srt_content.strip())
-        
+
         for block in blocks:
             lines = block.strip().split("\n")
-            if len(lines) < 3:
+            if len(lines) < 2:
                 continue
-            
+
+            # 尝试解析序号（兼容无序号情况）
+            time_line_idx = 0
             try:
                 index = int(lines[0])
+                time_line_idx = 1
             except ValueError:
+                index = len(entries) + 1
+
+            if time_line_idx >= len(lines):
                 continue
-            
+
             # 解析时间戳
             time_match = re.match(
                 r"(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})",
-                lines[1]
+                lines[time_line_idx]
             )
             if not time_match:
                 continue
-            
+
             start_time = time_match.group(1).replace(",", ".")
             end_time = time_match.group(2).replace(",", ".")
-            
+
             # 合并文本行
-            text = " ".join(lines[2:])
+            text = " ".join(lines[time_line_idx + 1:])
             # 清理 HTML 标签
             text = re.sub(r"<[^>]+>", "", text)
-            
+
+            if not text.strip():
+                continue
+
             entry = SubtitleEntry(
                 index=index,
                 start_time=start_time,
@@ -60,7 +133,7 @@ class SubtitleAnalyzer:
                 start_seconds=self._time_to_seconds(start_time)
             )
             entries.append(entry)
-        
+
         return entries
     
     def _time_to_seconds(self, time_str: str) -> float:
@@ -98,7 +171,7 @@ class SubtitleAnalyzer:
         Returns:
             格式化的搜索结果
         """
-        entries = self.parse_srt(srt_content)
+        entries = self.parse(srt_content)
         
         if not entries:
             return "无法解析字幕内容"
@@ -187,7 +260,7 @@ class SubtitleAnalyzer:
         Returns:
             分段列表，每段包含时间范围和文本
         """
-        entries = self.parse_srt(srt_content)
+        entries = self.parse(srt_content)
         
         if not entries:
             return []
@@ -241,7 +314,7 @@ class SubtitleAnalyzer:
         Returns:
             章节列表
         """
-        entries = self.parse_srt(srt_content)
+        entries = self.parse(srt_content)
         
         if len(entries) < 2:
             return []

@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -34,31 +35,55 @@ class SubtitleExtractor:
                 if re.match(pattern, url, re.IGNORECASE):
                     return platform
         return None
+
+    def _build_auth_args(self, cookies_file: Optional[str] = None) -> list[str]:
+        """
+        构建认证参数，按优先级降级
+
+        优先级: 参数 > 环境变量 > 浏览器 cookies
+        """
+        # 1. 显式指定的 cookies 文件
+        if cookies_file:
+            expanded_path = os.path.expanduser(cookies_file)
+            if Path(expanded_path).exists():
+                return ["--cookies", expanded_path]
+
+        # 2. 环境变量指定的 cookies 文件
+        env_cookies = os.environ.get("YT_DLP_COOKIES")
+        if env_cookies:
+            expanded_path = os.path.expanduser(env_cookies)
+            if Path(expanded_path).exists():
+                return ["--cookies", expanded_path]
+
+        # 3. 尝试浏览器 cookies（本地开发用，MCP 环境可能无法工作）
+        return ["--cookies-from-browser", "chrome"]
     
     async def extract(
-        self, 
-        url: str, 
-        lang: str = "zh", 
-        format: str = "srt"
+        self,
+        url: str,
+        lang: str = "zh",
+        format: str = "srt",
+        cookies_file: Optional[str] = None
     ) -> str:
         """
         提取字幕
-        
+
         Args:
             url: 视频 URL
             lang: 首选语言代码
             format: 输出格式 ('text' 或 'srt')
-        
+            cookies_file: cookies 文件路径，用于认证
+
         Returns:
             字幕文本
         """
         platform = self.detect_platform(url)
         if not platform:
             raise ValueError(f"不支持的视频平台，URL: {url}")
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             output_template = str(Path(tmpdir) / "subtitle")
-            
+
             # 构建 yt-dlp 命令
             cmd = [
                 "yt-dlp",
@@ -66,17 +91,14 @@ class SubtitleExtractor:
                 "--write-subs",     # 下载字幕
                 "--write-auto-subs",  # 也下载自动生成的字幕
                 "--sub-langs", f"{lang},zh,zh-Hans,zh-CN,en,ja",  # 字幕语言优先级
-                "--sub-format", "srt/vtt/best",
-                "--convert-subs", "srt",
+                "--sub-format", "vtt/srt/best",
                 "-o", output_template,
                 url
             ]
-            
-            # Bilibili 特殊处理
-            if platform == "bilibili":
-                cmd.extend([
-                    "--cookies-from-browser", "chrome",  # 可选：使用浏览器 cookies
-                ])
+
+            # 添加认证参数
+            if platform in ("bilibili", "youtube"):
+                cmd.extend(self._build_auth_args(cookies_file))
             
             # 执行命令
             process = await asyncio.create_subprocess_exec(
@@ -86,21 +108,16 @@ class SubtitleExtractor:
             )
             stdout, stderr = await process.communicate()
             
-            # 查找生成的字幕文件
+            # 查找生成的字幕文件（优先 VTT，兼容 SRT）
             tmppath = Path(tmpdir)
-            srt_files = list(tmppath.glob("*.srt"))
-            
-            if not srt_files:
-                # 尝试查找其他格式
-                vtt_files = list(tmppath.glob("*.vtt"))
-                if vtt_files:
-                    srt_files = vtt_files
-                else:
-                    error_msg = stderr.decode() if stderr else "未知错误"
-                    raise ValueError(f"无法提取字幕。可能原因：\n1. 视频没有字幕\n2. 网络问题\n3. 需要登录\n\n详细信息: {error_msg}")
+            subtitle_files = list(tmppath.glob("*.vtt")) or list(tmppath.glob("*.srt"))
+
+            if not subtitle_files:
+                error_msg = stderr.decode() if stderr else "未知错误"
+                raise ValueError(f"无法提取字幕。可能原因：\n1. 视频没有字幕\n2. 网络问题\n3. 需要登录\n\n详细信息: {error_msg}")
             
             # 读取字幕内容
-            subtitle_content = srt_files[0].read_text(encoding="utf-8")
+            subtitle_content = subtitle_files[0].read_text(encoding="utf-8")
             
             if format == "text":
                 return self._srt_to_text(subtitle_content)
@@ -130,27 +147,41 @@ class SubtitleExtractor:
         
         return "\n".join(lines)
     
-    async def get_video_info(self, url: str) -> dict:
-        """获取视频信息"""
+    async def get_video_info(
+        self, url: str, cookies_file: Optional[str] = None
+    ) -> dict:
+        """
+        获取视频信息
+
+        Args:
+            url: 视频 URL
+            cookies_file: cookies 文件路径，用于认证
+        """
+        platform = self.detect_platform(url)
+
         cmd = [
             "yt-dlp",
             "--dump-json",
             "--no-download",
             url
         ]
-        
+
+        # 添加认证参数
+        if platform in ("bilibili", "youtube"):
+            cmd.extend(self._build_auth_args(cookies_file))
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
-        
+
         if process.returncode != 0:
             raise ValueError(f"获取视频信息失败: {stderr.decode()}")
-        
+
         data = json.loads(stdout.decode())
-        
+
         # 提取关键信息
         return {
             "title": data.get("title", "未知"),
@@ -160,19 +191,33 @@ class SubtitleExtractor:
             "upload_date": data.get("upload_date", "未知"),
             "view_count": data.get("view_count", 0),
             "description": data.get("description", "")[:500],  # 截取前500字
-            "platform": self.detect_platform(url),
+            "platform": platform,
             "webpage_url": data.get("webpage_url", url)
         }
     
-    async def list_subtitles(self, url: str) -> dict:
-        """列出可用字幕"""
+    async def list_subtitles(
+        self, url: str, cookies_file: Optional[str] = None
+    ) -> dict:
+        """
+        列出可用字幕
+
+        Args:
+            url: 视频 URL
+            cookies_file: cookies 文件路径，用于认证
+        """
+        platform = self.detect_platform(url)
+
         cmd = [
             "yt-dlp",
             "--list-subs",
             "--no-download",
             url
         ]
-        
+
+        # 添加认证参数
+        if platform in ("bilibili", "youtube"):
+            cmd.extend(self._build_auth_args(cookies_file))
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
