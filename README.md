@@ -89,8 +89,9 @@ YouTube 和 Bilibili 的部分视频需要登录才能访问。由于 MCP 服务
 
 ```bash
 # 从 Chrome 导出 cookies（需要先登录 YouTube/Bilibili）
+# 使用具体视频 URL 比首页更快（避免解析推荐列表）
 yt-dlp --cookies-from-browser chrome --cookies ~/.yt-cookies.txt \
-  --skip-download "https://www.youtube.com"
+  --skip-download "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 
 # 设置文件权限（保护敏感信息）
 chmod 600 ~/.yt-cookies.txt

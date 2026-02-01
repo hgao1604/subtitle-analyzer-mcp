@@ -57,7 +57,7 @@ MCP servers run in background processes without access to browser cookies. Authe
 2. `YT_DLP_COOKIES` environment variable (recommended for MCP)
 3. `--cookies-from-browser chrome` (local development only)
 
-Export cookies: `yt-dlp --cookies-from-browser chrome --cookies ~/.yt-cookies.txt --skip-download "https://youtube.com"`
+Export cookies: `yt-dlp --cookies-from-browser chrome --cookies ~/.yt-cookies.txt --skip-download "https://www.youtube.com/watch?v=jNQXAC9IVRw"`
 
 ## Platform Support
 
